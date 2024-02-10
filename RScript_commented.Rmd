@@ -1,0 +1,393 @@
+---
+title: "Effects of taurine, cysteine and melatonin as antioxidant supplements to the freezing medium of Prrochilodus brevis sperm"
+author: "Cândido Sobrinho, SA"
+date: "2023-09-25"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_collapsed: true
+    theme: lumen
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+### 1 Loading required packages
+
+In order to proceed, **the following packages must be installed**:
+
+```{r packages, message=FALSE, warning=FALSE, include=TRUE}
+base::library(tidyverse)
+base::library(readxl)
+base::library(ggpubr)
+base::library(rstatix)
+base::library(agricolae)
+base::library(ggthemes)
+base::library(FactoMineR)
+base::library(rcompanion)
+base::library(FSA)
+base::library(factoextra)
+base::library(agricolae)
+```
+
+
+### 2 Declaring user-made functions
+
+Three custom functions were created for graphics and statistical analysis. 
+
+#### 2.1 Graphs (for discrete data)
+
+With this function we generate boxplots for discrete data such relative frequencies (%).
+
+```{r graphs_discrete, message=FALSE, warning=FALSE, include=TRUE}
+graphs_discrete <- function(treatment){
+
+    data$experiment |>
+
+    dplyr::filter(Treatment2 == treatment, Variable %in% c("Membrane integrity",
+                  "Normal morphology", "Motility", "Rapid", "DNA integrity")) |>
+
+    ggpubr::ggboxplot(x = "Concentration", y = "VALUE1", color = "Variable",
+                      add = "jitter", #facet.by = "Variable",
+                      xlab = paste0(treatment, "Concentration (mM)"), ylab = "Frequency (%)") +
+
+    ggplot2::facet_wrap(facets = ~ Variable, scales = "free") +
+
+    ggplot2::ylim(0,100) + ggthemes::scale_color_colorblind()
+}
+```
+
+#### 2.2 Graphs (for continuous data)
+
+This function generates boxplots for continuous data, in this study, VCL, VAP and VSL.
+
+```{r graphs_continuous, message=FALSE, warning=FALSE, include=TRUE}
+graphs_continuous <- function(treatment){
+
+    data$experiment |>
+
+    dplyr::filter(Treatment2 == treatment, Variable %in% c("VCL", "VAP", "VSL")) |>
+
+    ggpubr::ggboxplot(x = "Concentration", y = "VALUE1", color = "Variable",
+                      add = "jitter", #facet.by = "Variable",
+                      xlab = paste0(treatment, "Concentration (mM)"), ylab = "Frequency (%)") +
+
+    ggplot2::facet_wrap(facets = ~ Variable, scales = "free") +
+
+    ggthemes::scale_color_colorblind()
+}
+```
+
+#### 2.3 Kruskal-Wallis + post-hoc Dunn Test (Bonferroni) + Compact Letter Display (CLD)
+
+This function creates a list which contains:
+
+* 1. Kruskal-Wallis test summary;
+* 2. Dunn Test;
+* 3. Compact Letter Display dataframe
+
+The decision to employ the Bonferroni correction method is due its robust familywise error rate (FWER) control. Although it is acknowledged its conservative nature may result in missing discoveries, when true significance is not detected, it offers a substantial advantage in terms of reliability thus making this approach as a parsimonious choice, even if it entails a trade-off in false and true discovery rate.
+
+```{r dunntest_bonferroni, message=FALSE, warning=FALSE, include=TRUE}
+dunntest_bonferroni <- function(treatment, variable) {
+  
+  base::list() -> list_tobe_returned
+
+  FSA::dunnTest(x = VALUE1 ~ Treatment,
+                data = data$experiment |>
+                       dplyr::filter(Treatment2 != "Control") |>
+                       dplyr::filter(Treatment2 == treatment, Variable   == variable),
+                method = "bonferroni") -> list_tobe_returned$dunn
+  
+  list_tobe_returned[["dunn"]][["dtres"]] -> list_tobe_returned$kruskal_wallis
+  
+  rcompanion::cldList(formula = P.adj ~ Comparison,
+                      data = list_tobe_returned$dunn$res,
+                      threshold = 0.05,
+                      remove.zero = FALSE) -> list_tobe_returned$compact_letter_display
+
+  return(list_tobe_returned)
+}
+```
+
+
+### 3 Creating lists to store R outputs
+
+The objects will be created and stored in these lists, in order to keep a tidy environment.
+
+```{r, message=FALSE, warning=FALSE, include=TRUE}
+for(n in base::c("data", "graphs", "stats")) { base::assign(n, base::list())}
+
+base::list() -> stats$homogeneity
+base::list() -> stats$normality
+base::list() -> stats$kw_dunn
+
+base::remove(n); base::gc()
+```
+
+
+### 4 Loading dataset
+
+The dataset will be loaded and stored in the object located at the path `data$experiment`.
+
+```{r, message=FALSE, warning=FALSE, include=TRUE}
+readxl::read_xlsx("./Data/Experiment.xlsx") |>
+
+    base::as.data.frame() |>
+
+    dplyr::mutate(Treatment2 = Treatment ) |>
+
+    dplyr::mutate(Treatment = base::paste0(Treatment2, " ", "(", Concentration, "mM)")) -> data$experiment
+
+base::gc()
+```
+
+```{r}
+readxl::read_xlsx("./Data/Fresh.xlsx") |>
+  
+    base::as.data.frame() |>
+  
+    tidyr::pivot_longer(cols = 2:9, names_to = "Variables", values_to = "Values") -> data$fresh
+```
+
+```{r}
+readxl::read_xlsx("./Data/Concentration.xlsx") -> data$concentration
+```
+
+### 5 Data Analysis
+
+Each variable has been testes for normality test. Based on these results altogether, the team decided for not proceeding with parametric tests. Results will be stored at the list  `stats$normality` and `stats$homogeneity`.
+
+#### 5.1 Shapiro-Wilk test for Normality.
+```{r shapiro-wilk, message=FALSE, warning=FALSE, include=TRUE}
+data$experiment |>
+       dplyr::group_by(Treatment) |>
+       rstatix::shapiro_test(VALUE1) -> stats[["normality"]]
+
+base::gc()
+```
+
+#### Results for this step:
+```{r}
+stats[["normality"]]
+```
+
+
+#### 5.2 Fligner-Kileen test for Homogeneity.
+```{r fligner-kileen, message=FALSE, warning=FALSE, include=TRUE}
+for( i in unique(data$experiment$Variable) ) {
+  
+  stats::fligner.test(formula = VALUE1 ~ Treatment,
+                      data = data$experiment |>
+                             dplyr::filter(Variable == i)) -> stats[["homogeneity"]][[i]]}
+
+base::remove(i); base::gc()
+```
+
+#### Results for this step:
+```{r}
+stats[["homogeneity"]]
+```
+
+
+
+### 6 Analysis of Variance (Kruskal-Wallis + posthoc Dunn)
+
+Due to the observed tests results, we will proceed with a Dunn Test. The Kruskal-Wallis test is performed along with the function `FSA::dunnTest()`, which pairwise results for each factor level.
+
+With the pairwise p-value for this global Dunn test, a pairwise comparison within groups using compact letter display (CLD) has been employed using `rcompaniion::cldList()` function, which produces a better readability for the overall reader and unveil possible grouped factor levels responses.
+
+```{r, message=FALSE, warning=FALSE, include=TRUE}
+for(i in c("Melatonin", "Taurine", "Cysteine")) {
+  for(j in base::unique(data$experiment$Variable)){
+    dunntest_bonferroni(i, j) -> stats[["kw_dunn"]][[i]][[j]]
+  }
+}
+
+base::remove(i,j); base::gc()
+```
+
+#### Results for this step:
+```{r}
+for(i in c("Melatonin", "Taurine", "Cysteine")) {
+  for(j in base::unique(data$experiment$Variable)){
+    print(stats[["kw_dunn"]][[i]][[j]])
+  }
+}
+```
+
+
+### 7 Figures
+
+#### 7.1 Boxplots for discrete data
+
+```{r, message=FALSE, warning=FALSE, include=TRUE}
+for(i in data$experiment$Treatment2) { graphs_discrete(treatment = i) -> graphs[[base::paste0(i,"_freq")]] }
+
+base::remove(i); base::gc()
+```
+
+#### Results for this step:
+```{r}
+for(i in base::ls(graphs, pattern = "_freq")) { print(graphs[[i]]) }
+```
+
+
+#### 7.2 Boxplots for continuous data
+
+```{r, message=FALSE, warning=FALSE, include=TRUE}
+for(i in data$experiment$Treatment2) { graphs_continuous(treatment = i) -> graphs[[base::paste0(i,"_vel")]] }
+
+base::remove(i); base::gc()
+```
+
+
+#### 7.3 Figure (Rapid, VAP, VCL, VSL)
+
+```{r, message=FALSE, warning=FALSE, include=TRUE}
+data$experiment |>
+
+       dplyr::filter(Treatment %in% c("Control (0mM)", "Taurine (0.3mM)",
+                                      "Taurine (1mM)", "Taurine (3.16mM)",
+                                      "Taurine (10mM)", "Cysteine (0.3mM)",
+                                      "Cysteine (1mM)", "Cysteine (3.16mM)",
+                                      "Cysteine (10mM)", "Melatonin (0.6mM)",
+                                      "Melatonin (1.12mM)",
+                                      "Melatonin (2mM)", "Melatonin (3.56mM)")) |>
+
+       dplyr::filter(Variable %in% c("Rapid", "VAP", "VCL", "VSL")) |>
+
+       ggpubr::ggboxplot(x = "Treatment", y = "VALUE1",
+                         add = "jitter", color = "Treatment",
+                         ylab = "") +
+
+       ggpubr::rotate_x_text() +
+
+       ggplot2::theme(legend.position = "none") -> graphs$rapid_vel
+
+       ggpubr::facet(graphs$rapid_vel, facet.by = "Variable", ncol = 1, scales = "free_y") -> graphs$rapid_vel
+
+```
+
+#### Results for these steps:
+```{r}
+for(i in base::ls(graphs, pattern = "_vel")) { print(graphs[[i]]) }
+```
+
+
+## 8 Additional tables under request - Descriptive statistics
+
+#### 8.1 Fresh sperm table
+```{r}
+data$fresh |>
+  
+    dplyr::select(-Pool) |>
+  
+    dplyr::group_by(Variables) |>
+  
+    rstatix::get_summary_stats(Values) #|> utils::write.csv(file = "./table_fresh.csv")
+```
+
+
+#### 8.2 Table containing per treatment results
+```{r}
+data$experiment |>
+  
+    dplyr::select(Treatment, Variable, VALUE1) |>
+  
+    dplyr::group_by(Treatment, Variable) |>
+  
+    rstatix::get_summary_stats() |>
+  
+    dplyr::select(-c("variable", "n", "mad")) |>
+  
+    dplyr::rename(c("Minimum" = "min",
+                  "Maximum" = "max",
+                  "Mean" = "mean",
+                  "Median" = "median",
+                  "Q1" = "q1",
+                  "Q3" = "q3",
+                  "IQR" = "iqr",
+                  "CI (95%)" = "ci")) #|> utils::write.csv(file = "./table_experiment.csv", row.names = FALSE)
+```
+
+
+#### 8.3 Table containing data from mean sperm concentration
+```{r}
+data$concentration |>
+
+    dplyr::group_by(Pool) |>
+
+    dplyr::mutate(Count = Count * 0.2 * 1E9) |>
+
+    dplyr::summarise(`Sperm concentration (cells/mL)` = base::round(base::mean(Count),2),
+                     `Standard Deviation` = base::round(stats::sd(Count),2),
+                     Minimum = min(Count),
+                     Maximum = max(Count)) #|> utils::write.csv(file = "./table_concentration.csv", row.names = FALSE)
+```
+
+
+## 9 PCA (and ANOVA from PCA results)
+
+
+#### 9.1 Organizing dataset for a PCA (wider rather than longer)
+```{r}
+data$experiment |>
+  
+  dplyr::filter(Variable %in% c("VAP", "VSL", "VCL"), !Treatment %in% c("Melatonin (0mM)", "Taurine (0mM)", "Cysteine (0mM)")) |>
+  
+  dplyr::select(-c(VALUE2, VALUE3, Treatment2, Concentration)) |>
+  
+  dplyr::group_by(Treatment, Variable) |> dplyr::mutate(Treatments = paste0(Treatment, dplyr::row_number())) |>
+  
+  tidyr::pivot_wider(names_from = "Variable", values_from = "VALUE1") -> data$data4pca
+```
+
+
+#### 9.2 Building the PCA model
+```{r}
+FactoMineR::PCA(X = data$data4pca[3:5], ncp = 2, scale = TRUE, graph = FALSE) -> stats$PCA
+
+data$data4pca$Treatments -> base::row.names(stats$PCA$ind$coord)
+
+factoextra::fviz_pca_biplot(stats$PCA, addEllipses = TRUE)
+```
+
+#### 9.3 Obtaining a dataframe containing individual coordinates and their respective groups
+```{r}
+base::cbind.data.frame(coord = stats$PCA$ind$coord[,1], group = data$data4pca$Treatment) -> data$pcacoords_names
+data$pcacoords_names
+```
+
+
+##### 9.4 Running an ANOVA model + post-hoc Tukey
+
+```{r}
+stats::aov(data = data$pcacoords_names, formula = coord ~ group) -> stats$aov
+
+#base::sink(file = "aov_results.txt")
+base::summary(stats$aov)
+#base::sink()
+```
+
+#### 9.5 Performing an Tukey test
+```{r}
+stats$aov |> agricolae::HSD.test(trt = "group", group = TRUE) -> stats$tukey_hsd
+
+stats$tukey_hsd$means #|> utils::write.csv(file = "tukey_means.csv")
+
+stats$tukey_hsd$groups #|> utils::write.csv(file = "tukey_CLD.csv")
+```
+
+
+### 10 R Session
+
+This code shows the R version and packages used for this study.
+
+```{r}
+utils::sessionInfo()
+```
+
